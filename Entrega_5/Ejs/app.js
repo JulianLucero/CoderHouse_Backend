@@ -1,26 +1,15 @@
 const express = require("express")
-const handlebars = require("express-handlebars")
 const app = express()
 
 const PORT = process.env.PORT || 8080
 
-app.engine(
-    "hbs",
-    handlebars.engine({
-        extname: ".hbs",
-        defaultLayout: "index.hbs",
-        layoutsDir: __dirname + "/views",
-        // partialsDir: __dirname + "/views" 
-    })
-)
-app.set("view engine", "hbs")
-app.set("views", "./Handlebars/views")
+app.set("view engine", "ejs")
+app.set("views", "./Ejs/views")
 
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 app.use(express.static("public"))
 
-//////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////
 
 const { Router } = express
