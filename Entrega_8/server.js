@@ -1,75 +1,154 @@
-const express = require("express")
-const { Server:HttpServer } = require("http")
-const { Server:ServerIo } = require("socket.io")
-const app = express()
-const httpServer = new HttpServer(app)
-const io = new ServerIo(httpServer)
+const { Contenedor } = require("./contenedor");
 
-const PORT = process.env.PORT || 8080
+const express = require("express");
+const handlebars = require("express-handlebars");
 
-app.set("view engine", "pug")
-app.set("views", "./views")
+const { optionsMDB } = require("./mariaDB/conexionMariaDB");
+const { optionsQLite } = require("./sqlite3/conexionSQLite");
 
-app.use(express.json())
-app.use(express.urlencoded({ extended: true }))
-app.use(express.static("public"))
+const knexMariaDB = require("knex")(optionsMDB);
+const knexSqlite3 = require("knex")(optionsQLite);
 
+const productos = new Contenedor(knexMariaDB, "products");
+const comentarios = new Contenedor(knexSqlite3, "messages");
 
-const Contenedor = require('./public/contenedor')
-const db = new Contenedor('products')
+const { Server: HttpServer } = require("http");
+const { Server: IoServer } = require("socket.io");
 
-const ContenedorChat = require('./public/contenedorChat')
-const chatdb = new ContenedorChat('chat')
+const app = express();
+const httpServer = new HttpServer(app);
+const io = new IoServer(httpServer);
 
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+const port = process.env.PORT || 8080;
 
-//////////////////////////////////////////////////////
-////////////////////////CLIENTE///////////////////////
-//////////////////////////////////////////////////////
+// ** Mensajes----------------
+// ----------------------------INICIO
+io.on("connection", async socket => {
+	let mensajesChat = await comentarios.getAll();
+	console.log("Se contectó un usuario");
 
-io.on('connection', (socket) => {
-    console.log('Unknown bunny connected')
+	const mensaje = {
+		mensaje: "ok",
+		mensajesChat
+	};
 
-    db.get().then((products) => {
-        socket.emit('connection', {"products": products})
-    }).catch((err) => {
-        (err['code'] === 'ER_NO_SUCH_TABLE') ? db.createTable() : console.log(err) ; throw err
-    })
+	socket.emit("mensaje-servidor", mensaje);
 
-    chatdb.get().then((msgs) => {
-        socket.emit('connection', {"messages":msgs})
-    }).catch((err) => {
-        chatdb.createTable()
-        console.log(err) ; throw err
-    })
+	socket.on("mensaje-nuevo", async (msg, cb) => {
+		mensajesChat.push(msg);
+		const mensaje = {
+			mensaje: "mensaje nuevo",
+			mensajesChat
+		};
 
-    // NUEVOS PRODUCTOS
-    socket.on('postProduct', (product) => {
-        db.add(product)
-        io.emit('postProduct', product)
-    })
+		const id = new Date().getTime();
+		io.sockets.emit("mensaje-servidor", mensaje);
+		cb(id);
+		await comentarios.save({
+			id,
+			mail: msg.mail,
+			mensaje: msg.mensaje,
+			fecha: msg.hora
+		});
+	});
+});
+// ---------------------------- FIN
 
-    // NUEVOS MENSAJES DEL CHAT
-    socket.on('chatter', (message) => {
-        chatdb.add(message)
-        io.emit('chatter', message)
-    })
-})
+// -------------------------------- INICIO Mensajes cambios por json.
+app.get("/api/mensajes/:id", async (req, res) => {
+	const { id } = req.params;
+	const productoById = await comentarios.getById(id);
+	productoById
+		? res.json(productoById)
+		: res.json({ error: "Producto no encontrado" });
+});
 
+app.put("/api/mensajes/:id", async (req, res) => {
+	const { id } = req.params;
+	const respuesta = await comentarios.updateById(id, req.body);
+	res.json(respuesta);
+	mensajes = await comentarios.getAll();
+});
 
-//////////////////////////////////////////////////////
-//////////////////////////////////////////////////////
-//////////////////////////////////////////////////////
+app.delete("/api/mensajes/:id", async (req, res) => {
+	const { id } = req.params;
+	res.json(await comentarios.deleteById(id));
+	mensajes = await comentarios.getAll();
+});
 
+app.delete("/api/mensajes", async (req, res) => {
+	res.json(await comentarios.deleteAll());
+	mensajes = await comentarios.getAll();
+});
+// -------------------------------- FIN Mensajes cambios por json.
 
-const productsRouter = require("./routes/Products")
-app.use("/", productsRouter)
+// ** Render con handlebars
+// ------------------------------ INICIO
+app.set("view engine", "hbs");
+app.set("views", "./views/layouts");
 
-app.use( (req, res) => {
-    res.status(404);
-    res.send("...huh?");
-})
+app.use(express.static("public"));
 
-httpServer.listen(PORT, err => {
-    if (err) throw err
-    console.log("Server running on port 8080")
-})
+app.engine(
+	"hbs",
+	handlebars.engine({
+		extname: ".hbs",
+		defaultLayout: "",
+		layoutsDir: "",
+		partialsDir: __dirname + "/views/partials"
+	})
+);
+// ---------------------------- FIN
+
+// ** Productos
+// ------------------------------ INICIO
+app.get("/", async (req, res) => {
+	const producto = await productos.getAll();
+	res.render("index", {
+		list: producto,
+		listExist: true,
+		producto: true
+	});
+});
+
+app.get("/", async (req, res) => {
+	const producto = await productos.getAll();
+	res.render("productos", {
+		titulo: "Útiles escolares 2022",
+		list: producto,
+		listExist: true,
+		producto: true
+	});
+});
+
+app.post("/", async (req, res) => {
+	const objProducto = req.body;
+	productos.save(objProducto);
+	res.redirect("/");
+});
+
+app.put("/api/productos/:id", async (req, res) => {
+	const { id } = req.params;
+	const respuesta = await productos.updateById(id, req.body);
+	res.json(respuesta);
+	losProductos = await productos.getAll();
+});
+
+app.delete("/api/productos/:id", async (req, res) => {
+	const { id } = req.params;
+	res.json(await productos.deleteById(id));
+	losProductos = await productos.getAll();
+});
+
+app.delete("/api/productos", async (req, res) => {
+	res.json(await productos.deleteAll());
+	productos = await productos.getAll();
+});
+// ---------------------------- FIN
+
+httpServer.listen(port, err => {
+	if (err) throw new Error(`Error al iniciar el servidor: ${err}`);
+	console.log(`Server is running on port ${port}`);
+});
